@@ -495,6 +495,7 @@ func (c *Client) GetLedgerHeader(ctx context.Context, sequence uint32) (*LedgerH
 	attempts := c.endpointAttempts()
 	var failures []NodeFailure
 	for attempt := 0; attempt < attempts; attempt++ {
+		resp, err := c.getLedgerHeaderAttempt(ctx, sequence)
 		if err == nil {
 			c.markSuccess(c.HorizonURL)
 			return resp, nil
@@ -504,7 +505,8 @@ func (c *Client) GetLedgerHeader(ctx context.Context, sequence uint32) (*LedgerH
 
 		failures = append(failures, NodeFailure{URL: c.HorizonURL, Reason: err})
 
-		if attempt < attempts-1 && len(c.AltURLs) > 1 {, "error", err)
+		if attempt < attempts-1 && len(c.AltURLs) > 1 {
+			logger.Logger.Warn("Retrying ledger header fetch with fallback RPC...", "error", err)
 			if !c.rotateURL() {
 				break
 			}
@@ -688,6 +690,7 @@ func (c *Client) GetLedgerEntries(ctx context.Context, keys []string) (map[strin
 	attempts := c.endpointAttempts()
 	var failures []NodeFailure
 	for attempt := 0; attempt < attempts; attempt++ {
+		res, err := c.getLedgerEntriesAttempt(ctx, keysToFetch)
 		if err == nil {
 			c.markSuccess(c.SorobanURL)
 			// Merge with cached results
@@ -700,7 +703,8 @@ func (c *Client) GetLedgerEntries(ctx context.Context, keys []string) (map[strin
 		c.markFailure(c.SorobanURL)
 		failures = append(failures, NodeFailure{URL: c.SorobanURL, Reason: err})
 
-		if attempt < attempts-1 && len(c.AltURLs) > 1 {, "error", err)
+		if attempt < attempts-1 && len(c.AltURLs) > 1 {
+			logger.Logger.Warn("Retrying with fallback Soroban RPC...", "error", err)
 			if !c.rotateURL() {
 				break
 			}
