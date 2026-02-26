@@ -96,6 +96,7 @@ func runDryRun(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return errors.WrapValidationError(fmt.Sprintf("failed to create client: %v", err))
 	}
+	registerCacheFlushHook()
 
 	ctx := cmd.Context()
 
@@ -137,6 +138,8 @@ func runDryRun(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return errors.WrapSimulatorNotFound(err.Error())
 	}
+	registerRunnerCloseHook("dry-run-simulator-runner", runner)
+	defer func() { _ = runner.Close() }()
 
 	// The current Rust simulator requires a non-empty result_meta_xdr.
 	// For dry-run we don't have it (tx not on-chain), so we use a placeholder.
@@ -146,7 +149,7 @@ func runDryRun(cmd *cobra.Command, args []string) error {
 		LedgerEntries: ledgerEntries,
 	}
 
-	resp, err := runner.Run(simReq)
+	resp, err := runner.Run(ctx, simReq)
 	if err != nil {
 		return errors.WrapSimulationFailed(err, "")
 	}
