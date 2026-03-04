@@ -69,11 +69,11 @@ Examples:
 		if cmpLocalWasmFlag == "" {
 			return errors.WrapValidationError("--wasm flag is required for compare mode")
 		}
-		if _, err := os.Stat(cmpLocalWasmFlag); os.IsNotExist(err) {
+		if _, statErr := os.Stat(cmpLocalWasmFlag); os.IsNotExist(statErr) {
 			return errors.WrapValidationError(fmt.Sprintf("WASM file not found: %s", cmpLocalWasmFlag))
 		}
-		if err := rpc.ValidateTransactionHash(args[0]); err != nil {
-			return errors.WrapValidationError(fmt.Sprintf("invalid transaction hash: %v", err))
+		if validateErr := rpc.ValidateTransactionHash(args[0]); validateErr != nil {
+			return errors.WrapValidationError(fmt.Sprintf("invalid transaction hash: %v", validateErr))
 		}
 		switch rpc.Network(cmpNetworkFlag) {
 		case rpc.Testnet, rpc.Mainnet, rpc.Futurenet:
@@ -107,7 +107,8 @@ func init() {
 		"Colour theme (default, deuteranopia, protanopia, tritanopia, high-contrast)")
 	compareCmd.Flags().Uint32Var(&cmpProtoFlag, "protocol-version", 0,
 		"Override protocol version for both simulation passes (20, 21, 22, …)")
-
+	_ = compareCmd.RegisterFlagCompletionFunc("network", completeNetworkFlag)
+	_ = compareCmd.RegisterFlagCompletionFunc("theme", completeThemeFlag)
 	rootCmd.AddCommand(compareCmd)
 }
 
@@ -154,7 +155,7 @@ func runCompare(cmd *cobra.Command, cmdArgs []string) error {
 		token = os.Getenv("ERST_RPC_TOKEN")
 	}
 	if token == "" {
-		if cfg, err := config.Load(); err == nil && cfg.RPCToken != "" {
+		if cfg, cfgErr := config.Load(); cfgErr == nil && cfg.RPCToken != "" {
 			token = cfg.RPCToken
 		}
 	}
@@ -167,7 +168,7 @@ func runCompare(cmd *cobra.Command, cmdArgs []string) error {
 		urls := splitTrimmed(cmpRPCURLFlag)
 		clientOpts = append(clientOpts, rpc.WithAltURLs(urls))
 	} else {
-		if cfg, err := config.Load(); err == nil {
+		if cfg, cfgErr := config.Load(); cfgErr == nil {
 			if len(cfg.RpcUrls) > 0 {
 				clientOpts = append(clientOpts, rpc.WithAltURLs(cfg.RpcUrls))
 			} else if cfg.RpcUrl != "" {
@@ -249,14 +250,14 @@ func runBothPasses(
 	go func() {
 		defer wg.Done()
 		req := buildSimRequest(txResp, ledgerEntries, &localWasmPath, cmpArgsFlag)
-		localResult, localErr = runner.Run(req)
+		localResult, localErr = runner.Run(ctx, req)
 	}()
 
 	// Pass B – on-chain (no --wasm flag, uses whatever is in the ledger)
 	go func() {
 		defer wg.Done()
 		req := buildSimRequest(txResp, ledgerEntries, nil, nil)
-		onChainResult, onChainErr = runner.Run(req)
+		onChainResult, onChainErr = runner.Run(ctx, req)
 	}()
 
 	wg.Wait()
@@ -289,7 +290,7 @@ func buildSimRequest(
 		req.MockArgs = &mockArgs
 	}
 	if cmpProtoFlag > 0 {
-		if err := simulator.Validate(cmpProtoFlag); err == nil {
+		if validateErr := simulator.Validate(cmpProtoFlag); validateErr == nil {
 			req.ProtocolVersion = &cmpProtoFlag
 		}
 	}

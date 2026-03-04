@@ -102,7 +102,8 @@ The session ID can be auto-generated or specified with --id flag.`,
 		defer store.Close()
 
 		// Run cleanup before save
-		if err := store.Cleanup(ctx, session.DefaultTTL, session.DefaultMaxSessions); err != nil {
+		err = store.Cleanup(ctx, session.DefaultTTL, session.DefaultMaxSessions)
+		if err != nil {
 			// Log but don't fail on cleanup errors
 			fmt.Fprintf(os.Stderr, "Warning: cleanup failed: %v\n", err)
 		}
@@ -147,18 +148,15 @@ Use 'erst session list' to see available sessions.`,
 		defer store.Close()
 
 		// Run cleanup
-		if err := store.Cleanup(ctx, session.DefaultTTL, session.DefaultMaxSessions); err != nil {
+		err = store.Cleanup(ctx, session.DefaultTTL, session.DefaultMaxSessions)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: session cleanup failed: %v\n", err)
 		}
 
-		// Load session
-		data, err := store.Load(ctx, sessionID)
+		// Resolve session by exact ID, partial ID prefix, tx hash, or fuzzy match
+		data, err := resolveSessionInput(ctx, store, sessionID)
 		if err != nil {
-			suggestion, suggestErr := suggestSessionID(ctx, store, sessionID)
-			if suggestErr != nil {
-				return errors.WrapValidationError(fmt.Sprintf("failed to list sessions: %v", suggestErr))
-			}
-			return resourceNotFoundError(suggestion)
+			return err
 		}
 
 		// Check schema version compatibility
@@ -201,6 +199,17 @@ Use 'erst session list' to see available sessions.`,
 			}
 		}
 
+		// Show persisted viewer state if any (best-effort).
+		if uiStore, err := session.NewUIStateStore(); err == nil {
+			defer uiStore.Close()
+			if sections, err := uiStore.LoadSectionState(ctx, data.TxHash); err == nil && len(sections) > 0 {
+				fmt.Printf("\nViewer state: [%s]\n", strings.Join(sections, ", "))
+			}
+			if queries, err := uiStore.RecentSearches(ctx, 5); err == nil && len(queries) > 0 {
+				fmt.Printf("Recent searches: %s\n", strings.Join(queries, ", "))
+			}
+		}
+
 		return nil
 	},
 }
@@ -225,7 +234,8 @@ Displays session ID, network, last access time, and transaction hash.`,
 		defer store.Close()
 
 		// Run cleanup
-		if err := store.Cleanup(ctx, session.DefaultTTL, session.DefaultMaxSessions); err != nil {
+		err = store.Cleanup(ctx, session.DefaultTTL, session.DefaultMaxSessions)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: session cleanup failed: %v\n", err)
 		}
 
@@ -277,19 +287,17 @@ Use 'erst session list' to see available sessions.`,
 		}
 		defer store.Close()
 
-		// Delete session
-		if err := store.Delete(ctx, sessionID); err != nil {
-			if strings.Contains(strings.ToLower(err.Error()), "not found") {
-				suggestion, suggestErr := suggestSessionID(ctx, store, sessionID)
-				if suggestErr != nil {
-					return errors.WrapValidationError(fmt.Sprintf("failed to list sessions: %v", suggestErr))
-				}
-				return resourceNotFoundError(suggestion)
-			}
-			return errors.WrapValidationError(fmt.Sprintf("failed to delete session '%s': %v", sessionID, err))
+		// Resolve to a valid session ID before deleting
+		resolved, resolveErr := resolveSessionInput(ctx, store, sessionID)
+		if resolveErr != nil {
+			return resolveErr
 		}
 
-		fmt.Printf("Session deleted: %s\n", sessionID)
+		if err := store.Delete(ctx, resolved.ID); err != nil {
+			return errors.WrapValidationError(fmt.Sprintf("failed to delete session '%s': %v", resolved.ID, err))
+		}
+
+		fmt.Printf("Session deleted: %s\n", resolved.ID)
 		return nil
 	},
 }
